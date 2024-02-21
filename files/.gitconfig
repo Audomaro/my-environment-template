@@ -1,0 +1,6 @@
+[user]
+  name = Personal
+  email = personal@email.com
+
+[includeIf "gitdir/i:C:/repos/**"]
+  path = work.gitconfig

@@ -1,0 +1,241 @@
+#!/bin/bash
+
+# Define ANSI color codes
+RED='\e[31m'
+GREEN='\e[32m'
+BLUE='\e[36m'
+YELLOW='\e[33m'
+
+# Code to reset color to default
+RESET='\e[0m'
+
+# Function to display script usage
+function display_help() {
+  echo "Usage: $(basename $0) [options]"
+  echo
+  echo "Available Options:"
+  echo "--add-to-env    Append the script's path to the end of the .bashrc file to include it in the PATH environment."
+  echo "--configure     Generate symbolic links for the designated files listed in the 'env.config' file."
+  echo "--print-config  Prints the list of files and their symbolic links."
+  echo "--remove        Remove symbolic links for the files specified in the 'env.config' file."
+  echo "--sync          Pull and push changes from the repository."
+  echo "-h, --help      Print help."
+}
+
+# Function to configure symbolic links based on 'env.config'
+function configure_links() {
+  echo -n -e "${BLUE}ℹ${RESET} Initiating configuration"
+
+  for config in "${CONFIG_FILES[@]}"; do
+    IFS=':' read -r file link <<<"${config}"
+    eval "file=./${file}"
+    eval "link=${link}"
+
+    if [ -e "${file}" ]; then
+      if [ -e "${link}" ]; then
+        rm "${link}"
+      fi
+
+      ln "${file}" "${link}"
+    fi
+  done
+
+  if [ $? -eq 0 ]; then
+    echo -e "\r${GREEN}✔${RESET} Configuration completed successfully"
+  else
+    echo -e "\r${RED}✘${RESET} Error configuring symbolic links"
+  fi
+
+  print_config
+
+  echo
+
+  reload_bashrc
+}
+
+# Function to remove symbolic links based on 'env.config'
+function remove_links() {
+  echo -n -e "${BLUE}ℹ${RESET} Removing Symbolic Links"
+
+  for config in "${CONFIG_FILES[@]}"; do
+    IFS=':' read -r file link <<<"${config}"
+    eval "file=${file}"
+    eval "link=${link}"
+
+    if [ -e "${link}" ]; then
+      rm "${link}"
+    fi
+  done
+
+  if [ $? -eq 0 ]; then
+    echo -e "\r${GREEN}✔${RESET} All symbolic links removed successfully"
+  else
+    echo -e "\r${RED}✘${RESET} Error occurred while removing symbolic links"
+  fi
+
+  print_config
+
+  echo
+
+  reload_bashrc
+}
+
+# Function to sync changes from the repository
+function sync_repository() {
+  local current_dir=$(pwd)
+
+  echo -n -e "${BLUE}ℹ${RESET} Initiating synchronization of settings"
+  cd "${SCRIPT_DIR}"
+  git add env.config
+  cd "${SCRIPT_DIR}/files"
+  git add .
+  git commit -m "chore: :zap: update configuration files" >/dev/null 2>&1
+  git pull origin main >/dev/null 2>&1 && git push origin main >/dev/null 2>&1
+
+  if [ $? -eq 0 ]; then
+    echo -e "\r${GREEN}✔${RESET} Settings synchronized successfully    "
+  else
+    echo -e "\r${RED}✘${RESET} Error synchronizing settings          "
+  fi
+
+  cd "$current_dir"
+}
+
+# Function to add script path to .bashrc
+function add_to_env() {
+  echo "" >>"${BASHRC_PATH}"
+  echo "export PATH=\"\$PATH:${SCRIPT_DIR}\"" >>"${BASHRC_PATH}"
+  echo -e "${GREEN}✔${RESET} Added '${SCRIPT_DIR}' to the \$PATH environment variable."
+  reload_bashrc
+}
+
+# Function to print the configuration
+function print_config() {
+  calculate_max_lengths
+  echo
+  print_table_header
+  print_dividing_line
+
+  for config in "${CONFIG_FILES[@]}"; do
+    IFS=':' read -r file link <<<"${config}"
+    print_table_row "${file}" "${link}"
+  done
+  print_dividing_line
+}
+
+# Function to calculate the maximum lengths for formatting
+function calculate_max_lengths() {
+  for config in "${CONFIG_FILES[@]}"; do
+    IFS=':' read -r file link <<<"${config}"
+
+    if [ ${#file} -gt $MAX_FILE_LENGTH ]; then
+      MAX_FILE_LENGTH=${#file}
+    fi
+
+    if [ ${#link} -gt $MAX_LINK_LENGTH ]; then
+      MAX_LINK_LENGTH=${#link}
+    fi
+  done
+
+  if [[ $MAX_FILE_LENGTH -lt $MIN_FILE_LENGTH ]]; then
+    MAX_FILE_LENGTH=$MIN_FILE_LENGTH
+  fi
+
+  if [[ $MAX_LINK_LENGTH -lt $MIN_LINK_LENGTH ]]; then
+    MAX_LINK_LENGTH=$MIN_LINK_LENGTH
+  fi
+
+}
+
+# Function to print the table header
+function print_table_header() {
+  printf "| %-${MAX_FILE_LENGTH}s | %-${MAX_LINK_LENGTH}s | %s\n" "File" "Symbolic Link" "Status |"
+}
+
+# Function to print the dividing line in the table
+function print_dividing_line() {
+  local total_length=$((MAX_FILE_LENGTH + MAX_LINK_LENGTH + 5))
+  printf "|%-${MAX_FILE_LENGTH}s|-%-${MAX_LINK_LENGTH}s-|-%-${10}s-|%s\n" "$(printf '%.0s-' $(seq 1 $((MAX_FILE_LENGTH + 2))))" "$(printf '%.0s-' $(seq 1 $MAX_LINK_LENGTH))" "$(printf '%.0s-' $(seq 6))"
+}
+
+# Function to print a row in the table
+function print_table_row() {
+  local file="$1"
+  local link="$2"
+  local filename=''
+  eval "filename=${link}"
+
+  if [ -e "${filename}" ]; then
+    status="${GREEN}  ✔  ${RESET}"
+  else
+    status="${RED}  ✘  ${RESET}"
+  fi
+
+  printf "| %-${MAX_FILE_LENGTH}s | %-${MAX_LINK_LENGTH}s | %b%-${10}s %s |\n" "${file}" "${link}" "${status}"
+}
+
+# Function to reload .bashrc
+function reload_bashrc() {
+  if [ -f "${BASHRC_PATH}" ]; then
+    echo -n -e "${BLUE}ℹ${RESET} Reloading .bashrc file"
+
+    . "${BASHRC_PATH}"
+
+    if [ $? -eq 0 ]; then
+      echo -e "\r${GREEN}✔${RESET} .bashrc file reloaded successfully"
+    else
+      echo -e "\r${RED}✘${RESET} Error reloading .bashrc file"
+    fi
+  fi
+}
+
+# Main script starts here
+SCRIPT_PATH="$(readlink -f $0)"
+SCRIPT_DIR=$(dirname $SCRIPT_PATH)
+ENV_PATH="${SCRIPT_DIR}/env.config"
+BASHRC_PATH="${SCRIPT_DIR}/files/.bashrc"
+MIN_FILE_LENGTH=15
+MAX_FILE_LENGTH=0
+MIN_LINK_LENGTH=15
+MAX_LINK_LENGTH=0
+
+# Check if an option is provided to the script
+if [[ -z "$1" || "$1" == "--help" || "$1" == "-h" ]]; then
+  display_help
+  exit 0
+fi
+
+# Path to the file containing file path configurations
+ENVIROMENT_FILES="$(readlink -f ${ENV_PATH})"
+
+# Read configurations from the file and store them in the CONFIG_FILES array
+IFS=$'\r\n' GLOBIGNORE='*' command eval 'CONFIG_FILES=($(cat "${ENVIROMENT_FILES}"))'
+
+# Check if there are no configured file paths
+if [ ${#CONFIG_FILES[@]} -eq 0 ]; then
+  echo -e"${YELLOW}⚠${RESET}There are no configured file paths."
+  exit 0
+fi
+
+case "$1" in
+"--configure")
+  configure_links
+  ;;
+"--remove")
+  remove_links
+  ;;
+"--sync")
+  sync_repository
+  ;;
+"--add-to-env")
+  add_to_env
+  ;;
+"--print-config")
+  print_config
+  ;;
+*)
+  # Invalid option
+  echo "Option $1 not available"
+  exit 1
+  ;;
+esac
